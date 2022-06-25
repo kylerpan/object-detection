@@ -2,6 +2,7 @@ import cv2 as cv
 import tensorflow as tf
 import numpy as np
 import os
+import time
 
 VIDEO_DIM = (640, 480)
 MODEL_DIM = (512, 512)
@@ -313,26 +314,36 @@ def getAllBoundingBox(tensors, score_threshold, resized_frame_dim):
 
     for t in range(len(tensors)):
         b, h, w, c = tensors[t].shape
+        tensor_data = tensors[t].numpy().flatten()
+        data_position = 0
+
         for y in range(h):
             for x in range(w):
                 for a in range(ANCHOR_NUM):
                     # objectness score of that area
-                    objectness_score = sigmoid(tensors[t][0, y, x, a * (CLASS_NUM + 5) + 4])
+                    # objectness_score = sigmoid(tensors[t][0, y, x, a * (CLASS_NUM + 5) + 4])
+                    objectness_score = sigmoid(tensor_data[data_position + 4])
 
                     for c in range(5, 85):
                         # score per class
-                        class_score = sigmoid(tensors[t][0, y, x, a * (CLASS_NUM + 5) + c])
+                        # class_score = sigmoid(tensors[t][0, y, x, a * (CLASS_NUM + 5) + c])
+                        class_score = sigmoid(tensor_data[data_position + c])
                         score = objectness_score * class_score
                         
                         # make bounding box only if score is greater than threshold
                         if (score > score_threshold):
-                            x0 = (sigmoid(tensors[t][0, y, x, a * (CLASS_NUM + 5) + 0]) + x) / w
-                            y0 = (sigmoid(tensors[t][0, y, x, a * (CLASS_NUM + 5) + 1]) + y) / h
-                            #TODO: check the formula with baba
-                            x1 = x0 + np.exp(tensors[t][0, y, x, a * (CLASS_NUM + 5) + 2]) * ANCHOR_WIDTH[t][a] / resized_frame_dim[0]
-                            y1 = y0 + np.exp(tensors[t][0, y, x, a * (CLASS_NUM + 5) + 3]) * ANCHOR_HEIGHT[t][a] / resized_frame_dim[1]
+                            # x0 = (sigmoid(tensors[t][0, y, x, a * (CLASS_NUM + 5) + 0]) + x) / w
+                            # y0 = (sigmoid(tensors[t][0, y, x, a * (CLASS_NUM + 5) + 1]) + y) / h
+                            # x1 = x0 + np.exp(tensors[t][0, y, x, a * (CLASS_NUM + 5) + 2]) * ANCHOR_WIDTH[t][a] / resized_frame_dim[0]
+                            # y1 = y0 + np.exp(tensors[t][0, y, x, a * (CLASS_NUM + 5) + 3]) * ANCHOR_HEIGHT[t][a] / resized_frame_dim[1]
+                            x0 = (sigmoid(tensor_data[data_position + 0]) + x) / w
+                            y0 = (sigmoid(tensor_data[data_position + 1]) + y) / h
+                            x1 = x0 + np.exp(tensor_data[data_position + 2]) * ANCHOR_WIDTH[t][a] / resized_frame_dim[0]
+                            y1 = y0 + np.exp(tensor_data[data_position + 3]) * ANCHOR_HEIGHT[t][a] / resized_frame_dim[1]
                             bounding_box = BoundingBox(c - 5, score, 0, x0, y0, x1, y1)
                             all_bounding_box.append(bounding_box)
+                    
+                    data_position += CLASS_NUM + 5 
     
     return all_bounding_box
 
@@ -479,6 +490,7 @@ def runModel(model_path: str):
     i = 0
     while(True):
         # get frame from video
+        start_time = time.time()
         ret, frame = vid.read()
         if i == 0:
             print(f'Frame dimensions         = {frame.shape}')
@@ -494,13 +506,15 @@ def runModel(model_path: str):
         tensors = model(frame_data)
         if i == 0:
             for j in range(len(tensors)):
-                print(f'Tenors {j}                 = {tensors[j].shape}')
+                print(f'Tensors {j}                 = {tensors[j].shape}')
 
         bounding_boxes = getBoundingBoxes(tensors, resized_frame.shape[0:2], frame.shape[0:2], i)
 
         drawBoundingBoxes(frame, bounding_boxes, (0, 0, 0))
 
         # show frame
+        end_time = time.time()
+        print(f'Frames per second        = {end_time - start_time}')
         cv.imshow('frame', frame)
 
         # wait for 1 millisecond 
@@ -517,7 +531,6 @@ def runModel(model_path: str):
     
 if __name__ == '__main__':
     # file path yolo3: /Users/kylepan/Documents/keras-YOLOv3-model-set/weights/yolov3.h5
-    # file path yolo4: /Users/kylepan/Documents/keras-YOLOv3-model-set/weights/yolov4.h5
     model_path = input('Enter Model File Path:\n')
 
     if not os.path.exists(model_path):
