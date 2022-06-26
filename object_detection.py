@@ -95,14 +95,14 @@ LABEL = [
 ]
 
 class BoundingBox:
-    def __init__(self, class_index, score, area, x0, y0, x1, y1):
+    def __init__(self, class_index, score, area, x, y, w, h):
         self.class_index = class_index
         self.score = score
         self.area = area
-        self.x0 = x0
-        self.y0 = y0
-        self.x1 = x1
-        self.y1 = y1
+        self.x = x
+        self.y = y
+        self.w = w
+        self.h = h
 
 
 def getModelDims(model):
@@ -215,10 +215,10 @@ def calcIOU(bounding_box_0, bounding_box_1):
     # Returns:
         intersection over union of two bounding boxes
     '''
-    x_left = max(bounding_box_0.x0, bounding_box_1.x0)
-    x_right = min(bounding_box_0.x1, bounding_box_1.x1)
-    y_top = max(bounding_box_0.y0, bounding_box_1.y0)
-    y_bottom = min(bounding_box_0.y1, bounding_box_1.y1)
+    x_left = max(bounding_box_0.x, bounding_box_1.x)
+    x_right = min(bounding_box_0.x + bounding_box_0.w, bounding_box_1.x + bounding_box_1.w)
+    y_top = max(bounding_box_0.y, bounding_box_1.y)
+    y_bottom = min(bounding_box_0.y + bounding_box_0.h, bounding_box_1.y + bounding_box_1.h)
 
     if x_right < x_left or y_bottom < y_top:
         return 0.0
@@ -285,17 +285,18 @@ def drawBoundingBoxes(frame, bounding_boxes, color):
         label = '{} {:.2f}'.format(LABEL[bb.class_index], bb.score)
 
         # determining position of label
-        if bb.y0 > 20:
-            label_coords = (bb.x0, bb.y0)
+        if bb.y > 20:
+            label_coords = (bb.x, bb.y)
             label_type = 'LABEL_TOP_OUTSIDE'
-        elif bb.y0 <= 20 and bb.y1 <= frame.shape[2] - 20:
-            label_coords = (bb.x0, bb.y1)
+        elif bb.y <= 20 and bb.y + bb.h <= frame.shape[2] - 20:
+            label_coords = (bb.x, bb.y + bb.h)
             label_type = 'LABEL_BOTTOM_OUTSIDE'
-        elif bb.y1 > frame.shape[2] - 20:
-            label_coords = (bb.x0, bb.y0)
+        elif bb.y + bb.h > frame.shape[2] - 20:
+            label_coords = (bb.x, bb.y)
             label_type = 'LABEL_TOP_INSIDE'
 
-        cv.rectangle(frame, (bb.x0, bb.y0), (bb.x1, bb.y1), color, 1, cv.LINE_AA)
+        print('Bounding box coords      =', label_coords)
+        cv.rectangle(frame, (bb.x, bb.y), (bb.x + bb.w, bb.y + bb.h), color, 1, cv.LINE_AA)
         frame = drawLabel(frame, label, color, label_coords, label_type)
 
 
@@ -338,9 +339,9 @@ def getAllBoundingBox(tensors, score_threshold, resized_frame_dim):
                             # y1 = y0 + np.exp(tensors[t][0, y, x, a * (CLASS_NUM + 5) + 3]) * ANCHOR_HEIGHT[t][a] / resized_frame_dim[1]
                             x0 = (sigmoid(tensor_data[data_position + 0]) + x) / w
                             y0 = (sigmoid(tensor_data[data_position + 1]) + y) / h
-                            x1 = x0 + np.exp(tensor_data[data_position + 2]) * ANCHOR_WIDTH[t][a] / resized_frame_dim[0]
-                            y1 = y0 + np.exp(tensor_data[data_position + 3]) * ANCHOR_HEIGHT[t][a] / resized_frame_dim[1]
-                            bounding_box = BoundingBox(c - 5, score, 0, x0, y0, x1, y1)
+                            w0 = np.exp(tensor_data[data_position + 2]) * ANCHOR_WIDTH[t][a] / resized_frame_dim[0]
+                            h0 = np.exp(tensor_data[data_position + 3]) * ANCHOR_HEIGHT[t][a] / resized_frame_dim[1]
+                            bounding_box = BoundingBox(c - 5, score, 0, x0, y0, w0, h0)
                             all_bounding_box.append(bounding_box)
                     
                     data_position += CLASS_NUM + 5 
@@ -364,26 +365,29 @@ def convertBoundingBoxToImageDim(all_bounding_box, resized_frame_dim, frame_dim)
 
     for bounding_box in all_bounding_box:
         # scaling back to frame dimension
-        x0 = bounding_box.x0 * resized_frame_dim[0] * scale
-        y0 = bounding_box.y0 * resized_frame_dim[1] * scale
-        x1 = bounding_box.x1 * resized_frame_dim[0] * scale
-        y1 = bounding_box.y1 * resized_frame_dim[1] * scale
+        x = bounding_box.x * resized_frame_dim[0] * scale 
+        y = bounding_box.y * resized_frame_dim[1] * scale 
+        w = bounding_box.w * resized_frame_dim[0] * scale
+        h = bounding_box.h * resized_frame_dim[1] * scale
+
+        x = x - (w) / 2
+        y = y - (h) / 2
 
         # ensuring positions are in frame
-        x0 = intClip(x0, 0, frame_dim[0] - 1)
-        y0 = intClip(y0, 0, frame_dim[1] - 1)
-        x1 = intClip(x1, 0, frame_dim[0] - 1)
-        y1 = intClip(y1, 0, frame_dim[1] - 1)
+        x = intClip(x, 0, frame_dim[0] - 1)
+        y = intClip(y, 0, frame_dim[1] - 1)
+        w = intClip(w, 0, frame_dim[0] - 1)
+        h = intClip(h, 0, frame_dim[1] - 1)
 
         # reassigning bounding box coordinates & area
-        bounding_box.x0 = x0
-        bounding_box.y0 = y0
-        bounding_box.x1 = x1
-        bounding_box.y1 = y1
-        if (x1 - x0 < 1 or y1 - y0 < 1):
+        bounding_box.x = x
+        bounding_box.y = y
+        bounding_box.w = w
+        bounding_box.h = h
+        if (w < 1 or h < 1):
             bounding_box.score = 0
         else:
-            bounding_box.area = (y1 - y0) * (x1 - x0)
+            bounding_box.area = w * h
 
     sorted(all_bounding_box, reverse=True, key=lambda bounding_box: bounding_box.score)
 
@@ -492,6 +496,8 @@ def runModel(model_path: str):
         # get frame from video
         start_time = time.time()
         ret, frame = vid.read()
+        if frame.all() == None:
+            continue
         if i == 0:
             print(f'Frame dimensions         = {frame.shape}')
 
@@ -506,7 +512,7 @@ def runModel(model_path: str):
         tensors = model(frame_data)
         if i == 0:
             for j in range(len(tensors)):
-                print(f'Tensors {j}                 = {tensors[j].shape}')
+                print(f'Tensors {j}                = {tensors[j].shape}')
 
         bounding_boxes = getBoundingBoxes(tensors, resized_frame.shape[0:2], frame.shape[0:2], i)
 
@@ -514,7 +520,7 @@ def runModel(model_path: str):
 
         # show frame
         end_time = time.time()
-        print(f'Frames per second        = {end_time - start_time}')
+        print(f'Frames per second        = {1 / (end_time - start_time)}')
         cv.imshow('frame', frame)
 
         # wait for 1 millisecond 
