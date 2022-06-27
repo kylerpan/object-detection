@@ -1,3 +1,4 @@
+from tkinter import Label
 import cv2 as cv
 import tensorflow as tf
 import numpy as np
@@ -228,42 +229,6 @@ def calcIOU(bounding_box_0, bounding_box_1):
     return intersection / (bounding_box_0.area + bounding_box_1.area - intersection)
 
 
-def drawLabel(frame, label, color, label_coords, label_type):
-    '''
-    Draws the bounding labels onto the frame
-
-    # Arguments: 
-        frame: video frame
-        label: what the bounding box is going to be labeled as
-        color: color of the bounding boxes
-        label_coords: coordinates of the label
-        label_type: where the label where be placed
-
-    # Returns:
-        none
-    '''
-    # adjustments for font
-    font = cv.FONT_HERSHEY_PLAIN
-    font_scale = 1.
-    (label_width, label_height) = cv.getTextSize(label, font, fontScale=font_scale, thickness=1)[0]
-
-    # adjustments for rectangle behind label
-    padding = 5
-    rect_width = label_width + padding * 2
-    rect_height = label_height + padding * 2
-
-    x, y = label_coords
-
-    if label_type == 'LABEL_TOP_OUTSIDE':
-        cv.rectangle(frame, label_coords, (x + rect_width, y - rect_height), color, cv.FILLED)
-        cv.putText(frame, label, (x + padding, y - label_height + padding), font,
-                    fontScale=font_scale, color=(255, 255, 255), lineType=cv.LINE_AA)
-    else:
-        cv.rectangle(frame, label_coords, (x + rect_width, y + rect_height), color, cv.FILLED)
-        cv.putText(frame, label, (x + padding, y + label_height + padding), font,
-                    fontScale=font_scale, color=(255, 255, 255), lineType=cv.LINE_AA)
-
-
 def drawBoundingBoxes(frame, bounding_boxes, color):
     '''
     Draws the bounding boxes and labels onto the frame
@@ -283,6 +248,7 @@ def drawBoundingBoxes(frame, bounding_boxes, color):
     for bb in bounding_boxes:
         # label created in format 'classname score'
         label = '{} {:.2f}'.format(LABEL[bb.class_index], bb.score)
+        print(f'* {label}')
 
         # determining position of label
         if bb.y > 20:
@@ -295,9 +261,30 @@ def drawBoundingBoxes(frame, bounding_boxes, color):
             label_coords = (bb.x, bb.y)
             label_type = 'LABEL_TOP_INSIDE'
 
-        print('Bounding box coords      =', label_coords)
         cv.rectangle(frame, (bb.x, bb.y), (bb.x + bb.w, bb.y + bb.h), color, 1, cv.LINE_AA)
-        frame = drawLabel(frame, label, color, label_coords, label_type)
+
+        # creating label
+        font = cv.FONT_HERSHEY_PLAIN
+        font_scale = 1.
+        (label_width, label_height) = cv.getTextSize(label, font, fontScale=font_scale, thickness=1)[0]
+
+        # adjustments for rectangle behind label
+        padding = 5
+        rect_width = label_width + padding * 2
+        rect_height = label_height + padding * 2
+
+        x, y = label_coords
+
+        if label_type == 'LABEL_TOP_OUTSIDE':
+            cv.rectangle(frame, label_coords, (x + rect_width, y - rect_height), color, cv.FILLED)
+            cv.putText(frame, label, (x + padding, y - label_height + padding), font,
+                        fontScale=font_scale, color=(255, 255, 255), lineType=cv.LINE_AA)
+        else:
+            cv.rectangle(frame, label_coords, (x + rect_width, y + rect_height), color, cv.FILLED)
+            cv.putText(frame, label, (x + padding, y + label_height + padding), font,
+                        fontScale=font_scale, color=(255, 255, 255), lineType=cv.LINE_AA)
+
+    return frame
 
 
 def getAllBoundingBox(tensors, score_threshold, resized_frame_dim):
@@ -324,6 +311,9 @@ def getAllBoundingBox(tensors, score_threshold, resized_frame_dim):
                     # objectness score of that area
                     # objectness_score = sigmoid(tensors[t][0, y, x, a * (CLASS_NUM + 5) + 4])
                     objectness_score = sigmoid(tensor_data[data_position + 4])
+                    if objectness_score < score_threshold:
+                        data_position += CLASS_NUM + 5 
+                        continue
 
                     for c in range(5, 85):
                         # score per class
@@ -345,7 +335,7 @@ def getAllBoundingBox(tensors, score_threshold, resized_frame_dim):
                             all_bounding_box.append(bounding_box)
                     
                     data_position += CLASS_NUM + 5 
-    
+
     return all_bounding_box
 
 def convertBoundingBoxToImageDim(all_bounding_box, resized_frame_dim, frame_dim):
@@ -390,6 +380,7 @@ def convertBoundingBoxToImageDim(all_bounding_box, resized_frame_dim, frame_dim)
             bounding_box.area = w * h
 
     sorted(all_bounding_box, reverse=True, key=lambda bounding_box: bounding_box.score)
+
 
 def nonMaximumSuppression(all_bounding_box, iou_threshold):
     '''
@@ -457,18 +448,12 @@ def getBoundingBoxes(tensors, resized_frame_dim, frame_dim, i,
     '''
     
     all_bounding_box = getAllBoundingBox(tensors, score_threshold, resized_frame_dim)
-    if i == 0:
-        print(f'All bounding box:')
-        for j in range(len(all_bounding_box)):
-            print(f'Bounding Box {j} class     = {LABEL[all_bounding_box[i].class_index]}')
+    print(f'All bounding box num     = {len(all_bounding_box)}')
 
     convertBoundingBoxToImageDim(all_bounding_box, resized_frame_dim, frame_dim)
 
     revised_bounding_box = nonMaximumSuppression(all_bounding_box, iou_threshold)
-    if i == 0:
-        print(f'Revised bounding box:')
-        for j in range(len(revised_bounding_box)):
-            print(f'Bounding Box {j} score     = {revised_bounding_box[i].score}')
+    print(f'Revised bounding box num = {len(revised_bounding_box)}')
 
     return revised_bounding_box
 
@@ -494,13 +479,13 @@ def runModel(model_path: str):
     i = 0
     while(True):
         # get frame from video
-        start_time = time.time()
         ret, frame = vid.read()
-        if frame.all() == None:
+        if ret == False:
             continue
         if i == 0:
             print(f'Frame dimensions         = {frame.shape}')
 
+        start_time = time.time()
         resized_frame = resizeFrame(frame, padding, MODEL_DIM)
         if i == 0:
             print(f'Resized frame dimensions = {resized_frame.shape}')
@@ -510,18 +495,20 @@ def runModel(model_path: str):
             print(f'Net input dimensions     = {frame_data.shape}')
         
         tensors = model(frame_data)
+
         if i == 0:
             for j in range(len(tensors)):
                 print(f'Tensors {j}                = {tensors[j].shape}')
+            print()
 
         bounding_boxes = getBoundingBoxes(tensors, resized_frame.shape[0:2], frame.shape[0:2], i)
 
-        drawBoundingBoxes(frame, bounding_boxes, (0, 0, 0))
+        new_frame = drawBoundingBoxes(frame, bounding_boxes, (0, 0, 0))
 
         # show frame
         end_time = time.time()
-        print(f'Frames per second        = {1 / (end_time - start_time)}')
-        cv.imshow('frame', frame)
+        print(f'\nFrames per second        = {1 / (end_time - start_time)}')
+        cv.imshow('frame', new_frame)
 
         # wait for 1 millisecond 
         k = cv.waitKey(1)
@@ -537,7 +524,8 @@ def runModel(model_path: str):
     
 if __name__ == '__main__':
     # file path yolo3: /Users/kylepan/Documents/keras-YOLOv3-model-set/weights/yolov3.h5
-    model_path = input('Enter Model File Path:\n')
+    # model_path = input('Enter Model File Path:\n')
+    model_path = '/Users/kylepan/Documents/keras-YOLOv3-model-set/weights/yolov3.h5'
 
     if not os.path.exists(model_path):
         print(f"model file path {model_path} doesn't exist")
