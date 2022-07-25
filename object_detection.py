@@ -1,9 +1,11 @@
-from tkinter import Label
 import cv2 as cv
 import tensorflow as tf
 import numpy as np
 import os
 import time
+import onnxruntime as rt
+
+ONNX = True
 
 VIDEO_DIM = (640, 480)
 MODEL_DIM = (512, 512)
@@ -178,7 +180,7 @@ def normalizeFrame(frame):
     # Returns:
         normalized frame contains [batch, width, height, channel]
     '''
-    frame = frame / 255.0 
+    frame = frame.astype(np.float32) / 255.0
     frame = np.expand_dims(frame, axis=0)
 
     return frame
@@ -302,7 +304,8 @@ def getAllBoundingBox(tensors, score_threshold, resized_frame_dim):
 
     for t in range(len(tensors)):
         b, h, w, c = tensors[t].shape
-        tensor_data = tensors[t].numpy().flatten()
+        if ONNX: tensor_data = tensors[t].flatten()
+        else: tensor_data = tensors[t].numpy().flatten()
         data_position = 0
 
         for y in range(h):
@@ -431,7 +434,7 @@ def nonMaximumSuppression(all_bounding_box, iou_threshold):
 
 
 def getBoundingBoxes(tensors, resized_frame_dim, frame_dim, i, 
-                        score_threshold = 0.5, iou_threshold = 0.5):
+                        score_threshold = 0.6, iou_threshold = 0.6):
     '''
     Gets all bounding boxes from tensors
 
@@ -459,10 +462,17 @@ def getBoundingBoxes(tensors, resized_frame_dim, frame_dim, i,
 
 
 def runModel(model_path: str):
-    # loading the model
-    model = tf.keras.models.load_model(model_path, compile=False)
-    net_h, net_w, net_c = getModelDims(model)
-    print(f'\nModel input dimensions   = {net_h, net_w, net_c}')
+    if ONNX:
+        # loading the model
+        session = rt.InferenceSession(model_path, providers=['CUDAExecutionProvider', 'CPUExecutionProvider'])
+        input_names = [x.name for x in session.get_inputs()]
+        output_names = [x.name for x in session.get_outputs()]
+    else:
+        # loading the model
+        model = tf.keras.models.load_model(model_path, compile=False)
+        net_h, net_w, net_c = getModelDims(model)
+        # model.save('C:\Kyle_Work\python-object-detection')
+        print(f'\nModel input dimensions   = {net_h, net_w, net_c}')
 
     # getting video
     vid = cv.VideoCapture(0)
@@ -484,17 +494,29 @@ def runModel(model_path: str):
             continue
         if i == 0:
             print(f'Frame dimensions         = {frame.shape}')
+        frame = cv.flip(frame, 1)
 
         start_time = time.time()
         resized_frame = resizeFrame(frame, padding, MODEL_DIM)
         if i == 0:
             print(f'Resized frame dimensions = {resized_frame.shape}')
 
+        resized_frame= cv.cvtColor(resized_frame, cv.COLOR_BGR2RGB)
         frame_data = normalizeFrame(resized_frame)
         if i == 0:
             print(f'Net input dimensions     = {frame_data.shape}')
-        
-        tensors = model(frame_data)
+
+        if ONNX:
+
+            frame_data = frame_data.transpose(0, 3, 1, 2)
+            onnx_inputs = {input_names[0]: frame_data}
+            onnx_outputs = session.run(output_names, onnx_inputs)
+
+            tensors = list()
+            for i in range(len(onnx_outputs)):
+                tensors.append(onnx_outputs[i].transpose(0, 2, 3, 1))
+        else:
+            tensors = model(frame_data)
 
         if i == 0:
             for j in range(len(tensors)):
@@ -525,7 +547,10 @@ def runModel(model_path: str):
 if __name__ == '__main__':
     # file path yolo3: /Users/kylepan/Documents/keras-YOLOv3-model-set/weights/yolov3.h5
     # model_path = input('Enter Model File Path:\n')
-    model_path = '/Users/kylepan/Documents/keras-YOLOv3-model-set/weights/yolov3.h5'
+    if ONNX:
+        model_path = 'C:/Kyle_Work/models/yolov3.onnx'
+    else:
+        model_path = 'C:/work/third_party/keras-YOLOv3-model-set/weights/yolov3.h5'
 
     if not os.path.exists(model_path):
         print(f"model file path {model_path} doesn't exist")
