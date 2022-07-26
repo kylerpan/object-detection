@@ -3,7 +3,22 @@
 #include <opencv2/opencv.hpp>
 #include <chrono>
 
-typedef std::chrono::high_resolution_clock Clock;
+using ms = std::chrono::milliseconds;
+using us = std::chrono::microseconds;
+using Time = std::chrono::time_point<std::chrono::high_resolution_clock>;
+
+inline void sleep(int32_t n) { std::this_thread::sleep_for(ms(n)); }
+inline Time get_time() { return std::chrono::high_resolution_clock::now(); }
+inline uint32_t get_ms(Time& t0, Time& t1)
+{
+    auto t = std::chrono::duration_cast<ms>(t1 - t0);
+    return (uint32_t)t.count();
+}
+inline uint32_t get_us(Time& t0, Time& t1)
+{
+    auto t = std::chrono::duration_cast<us>(t1 - t0);
+    return (uint32_t)t.count();
+}
 
 int main() {
     Options options;
@@ -70,25 +85,27 @@ int main() {
     int i = 0;
     while (true)
     {
+        auto t0 = get_time();
         cap >> frame;
         cv::flip(frame, frame, 1);
         cv::Mat resized_frame(net_h, net_w, CV_8UC3);
 
         // pad frame to square, the resize
+        auto t1 = get_time();
         if (taller)
         {
-            cv::copyMakeBorder(frame, resized_frame, 0, 0, 0, padding, cv::BORDER_CONSTANT, (0, 0, 0));
+            cv::copyMakeBorder(frame, resized_frame, 0, 0, 0, padding, cv::BORDER_CONSTANT, cv::Scalar(0, 0, 0));
         }
         else
         {
-            cv::copyMakeBorder(frame, resized_frame, 0, padding, 0, 0, cv::BORDER_CONSTANT, (0, 0, 0));
-        }
+            cv::copyMakeBorder(frame, resized_frame, 0, padding, 0, 0, cv::BORDER_CONSTANT, cv::Scalar(0, 0, 0));
+        };
 
         if (i == 0) {
             printf("Padded frame shape = (%d, %d, %d)\n", resized_frame.rows, resized_frame.cols, resized_frame.channels());
         }
 
-        cv::resize(resized_frame, resized_frame, resized_frame.size(), 0.0, 0.0, cv::INTER_LINEAR);
+        cv::resize(resized_frame, resized_frame, cv::Size(net_w, net_h), 0.0, 0.0, cv::INTER_LINEAR);
 
         // normalizing frame
         cv::cvtColor(resized_frame, resized_frame, cv::COLOR_BGR2RGB);
@@ -104,10 +121,12 @@ int main() {
         }
 
         // reference
+        auto t2 = get_time();
         engine.execute();
         //printf("Executed Engine\n");
 
         // change from NCHW to NHWC
+        auto t3 = get_time();
         for (int i = 0; i < 3; i++)
         {
             float* psrc = tensors[i + 1].data;
@@ -126,7 +145,9 @@ int main() {
         // postprocess
         std::vector<BBox> boxes;
         Postprocess(frame_height, frame_width, net_h, net_w, out_tensors, boxes);
+        auto t4 = get_time();
         //printf("Got all Boxes\n");
+        if ((i & 31) == 0) printf("time get_video=%dus, preproc=%dus, infer=%dus, postproc=%dus\n", get_us(t0, t1), get_us(t1, t2), get_us(t2, t3), get_us(t3, t4));
 
         // draw bounding box
         DrawBox(boxes, frame);
